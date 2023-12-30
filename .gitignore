@@ -1,0 +1,8 @@
+**/__pycache__
+head_image/
+head_image_lm/
+input/
+origin_output/
+rvm_mobilenetv3.pth
+rvm_resnet50.pth
+face_detection/detection/sfd/s3fd.pth

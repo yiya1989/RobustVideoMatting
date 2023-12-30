@@ -51,11 +51,11 @@ class VideoWriter:
         self.container.mux(self.stream.encode())
         self.container.close()
 
-
 class ImageSequenceReader(Dataset):
     def __init__(self, path, transform=None):
         self.path = path
-        self.files = sorted(os.listdir(path))
+        _, image_list = get_image_list(path, "jpg")
+        self.files = image_list
         self.transform = transform
         
     def __len__(self):
@@ -80,9 +80,45 @@ class ImageSequenceWriter:
         # frames: [T, C, H, W]
         for t in range(frames.shape[0]):
             to_pil_image(frames[t]).save(os.path.join(
-                self.path, str(self.counter).zfill(4) + '.' + self.extension))
+                self.path, str(self.counter) + '.' + self.extension))
+                # self.path, str(self.counter).zfill(4) + '.' + self.extension))
             self.counter += 1
             
     def close(self):
         pass
         
+
+class ImageNPArrayReader(Dataset):
+    def __init__(self, input_source, transform=None):
+        self.input_source = input_source
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.input_source)
+
+    def __getitem__(self, idx):
+        with Image.open(os.path.join(self.path, self.files[idx])) as img:
+            img.load()
+        if self.transform is not None:
+            return self.transform(img)
+        return img
+
+
+def get_image_list(path, image_format="jpg", with_path=False):
+    if not os.path.isdir(path):
+        raise Exception(f"input path is not dir, path: {path}")
+    image_name_list = []
+    image_list = []
+    filelist = os.listdir(path)
+    image_names= [int(name[:-(len(image_format)+1)]) for name in filelist if name.endswith(image_format)]
+    image_names.sort()
+    # print(f"image list in path {path}/*.{image_format}, image_names: {image_names}")
+    for name in image_names:
+        if with_path:
+            image_path = os.path.join(path, f"{name}.{image_format}")
+        else:
+            image_path = f"{name}.{image_format}"
+        image_name_list.append(name)
+        image_list.append(image_path)
+    return image_name_list, image_list
+
