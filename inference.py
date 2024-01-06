@@ -18,11 +18,15 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from typing import Optional, Tuple
 from tqdm.auto import tqdm
+import numpy as np
+
+import argparse
+from model import MattingNetwork
 
 from inference_utils import VideoReader, VideoWriter, ImageSequenceReader, ImageSequenceWriter
 
 def convert_video(model,
-                  input_source: str,
+                  input_source: any,
                   input_resize: Optional[Tuple[int, int]] = None,
                   downsample_ratio: Optional[float] = None,
                   output_type: str = 'video',
@@ -57,7 +61,7 @@ def convert_video(model,
     
     assert downsample_ratio is None or (downsample_ratio > 0 and downsample_ratio <= 1), 'Downsample ratio must be between 0 (exclusive) and 1 (inclusive).'
     assert any([output_composition, output_alpha, output_foreground]), 'Must provide at least one output.'
-    assert output_type in ['video', 'png_sequence'], 'Only support "video" and "png_sequence" output modes.'
+    assert output_type in ['video', 'png', 'jpg'], 'Only support "video" and "png_sequence" output modes.'
     assert seq_chunk >= 1, 'Sequence chunk must be >= 1'
     assert num_workers >= 0, 'Number of workers must be >= 0'
     
@@ -71,6 +75,8 @@ def convert_video(model,
         transform = transforms.ToTensor()
 
     # Initialize reader
+    if isinstance(input_source, (np.ndarray, np.generic) ):
+        pass
     if os.path.isfile(input_source):
         source = VideoReader(input_source, transform)
     else:
@@ -98,11 +104,11 @@ def convert_video(model,
                 bit_rate=int(output_video_mbps * 1000000))
     else:
         if output_composition is not None:
-            writer_com = ImageSequenceWriter(output_composition, 'png')
+            writer_com = ImageSequenceWriter(output_composition, output_type)
         if output_alpha is not None:
-            writer_pha = ImageSequenceWriter(output_alpha, 'png')
+            writer_pha = ImageSequenceWriter(output_alpha, output_type)
         if output_foreground is not None:
-            writer_fgr = ImageSequenceWriter(output_foreground, 'png')
+            writer_fgr = ImageSequenceWriter(output_foreground, output_type)
 
     # Inference
     model = model.eval()
@@ -112,6 +118,8 @@ def convert_video(model,
         device = param.device
     
     if (output_composition is not None) and (output_type == 'video'):
+        bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+    else:
         bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
     
     try:
@@ -133,9 +141,11 @@ def convert_video(model,
                 if output_composition is not None:
                     if output_type == 'video':
                         com = fgr * pha + bgr * (1 - pha)
-                    else:
+                    elif output_type == 'png':
                         fgr = fgr * pha.gt(0)
                         com = torch.cat([fgr, pha], dim=-3)
+                    else:
+                        com = fgr * pha + bgr * (1 - pha)
                     writer_com.write(com[0])
                 
                 bar.update(src.size(1))
@@ -169,9 +179,7 @@ class Converter:
         convert_video(self.model, device=self.device, dtype=torch.float32, *args, **kwargs)
     
 if __name__ == '__main__':
-    import argparse
-    from model import MattingNetwork
-    
+ 
     parser = argparse.ArgumentParser()
     parser.add_argument('--variant', type=str, required=True, choices=['mobilenetv3', 'resnet50'])
     parser.add_argument('--checkpoint', type=str, required=True)
