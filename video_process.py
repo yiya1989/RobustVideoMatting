@@ -90,7 +90,8 @@ def clear_dir(path):
         raise Exception(f"input path is not dir, path: {path}")
     files = glob.glob(os.path.join(path, "*"))
     for f in files:
-        os.remove(f)
+        if os.path.isfile(f):
+            os.remove(f)
 
 
 def get_video_info(video_path):
@@ -231,6 +232,10 @@ def export_origin_image(args, video_info):
 
 
 def process_video_file(args, video_info):
+    
+    head_detect_image_dir = os.path.join(args.head_image, "detect")
+    os.makedirs(head_detect_image_dir, exist_ok=True)
+    clear_dir(head_detect_image_dir)
 
     head_image_dir = args.head_image
     os.makedirs(head_image_dir, exist_ok=True)
@@ -240,7 +245,7 @@ def process_video_file(args, video_info):
         args.origin_image, "jpg", True)
 
     max_frame = len(image_path_list)
-    # max_frame = 200
+    # max_frame = 10
 
     preds_cache = np.empty((max_frame, 4))
     preds_location = np.empty((max_frame, 6))
@@ -272,7 +277,7 @@ def process_video_file(args, video_info):
             for t_idx in range(args.sample):
                 # print(f"pred_idx: {pred_idx}")
                 preds_cache[pred_idx] = np.array([x1, y1, x2, y2])
-                # cv2.imwrite(path.join(head_image_dir, 'head', '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
+                cv2.imwrite(path.join(head_detect_image_dir, '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
                 pred_idx += 1
                 if pred_idx >= max_frame:
                     break
@@ -293,60 +298,103 @@ def process_video_file(args, video_info):
         # iy2 = int(min(iiy2, video_info.Height))
     bar.refresh()
     bar.close()
+    # print(f"preds_cache: {preds_cache} {preds_cache.shape}")
 
-    width = preds_cache[:, 2] - preds_cache[:, 0] + 1
-    hight = preds_cache[:, 3] - preds_cache[:, 1] + 1
+    # method1: get range
+    x1 = preds_cache[:,0].min()
+    x2 = preds_cache[:,2].max()
+    y1 = preds_cache[:,1].min()
+    y2 = preds_cache[:,3].max()
 
-    square = int(max(width.max(), hight.max()) * 1.6)
-    print("target talking head square: {}".format(square))
+    width = x2 - x1 + 1
+    hight = y2 - y1 + 1 
+    square = int(max(width, hight) * 1.5)
+    print(f"Head image location input: [{x1}, {y1}, {x2}, {y2}] {width}x{hight} -> {square}x{square}")
+    
+    diffx = (square - width)//2
+    diffy = (square - hight)//3
 
-    bar = tqdm(total=max_frame, disable=False,
-               dynamic_ncols=True, desc='ExportHead')
+    iix1 = int(x1 - diffx)
+    iix2 = iix1 + square - 1
+    iiy1 = int(y1 - diffy)
+    iiy2 = iiy1 + square - 1
+    iiwidth = iix2 - iix1 + 1
+    iihight = iiy2 - iiy1 + 1
+    print(f"Head image location output: [{iix1}, {iiy1}, {iix2}, {iiy2}] {iiwidth}x{iihight}")
+
+    bar = tqdm(total=max_frame, disable=False, dynamic_ncols=True, desc='ExportHead')
     for idx in range(max_frame):
         name = image_path_list[idx]
         img = cv2.imread(name, cv2.IMREAD_COLOR)
 
         x1, y1, x2, y2 = preds_cache[idx]
-        if args.debug:
-            print("process_video_file detected: {}, {}, {}, {}, {}".format(
-                idx, x1, y1, x2, y2))
-
-        width1 = width[idx]
-        hight1 = hight[idx]
-        diffx = (square - width1)//2
-        diffy = (square - hight1)//3
-
-        x1 = int(x1 - diffx)
-        x2 = int(x2 + diffx)
-        y1 = int(y1 - diffy*1)
-        y2 = int(y2 + diffy*2)
-
         width2 = x2 - x1 + 1
-        hight2 = y2 - y1 + 1
-
-        if hight2 < square:
-            y2 += square-hight2
-        if width2 < square:
-            x2 += square-width2
-
-        # we may need to check square in images
-        x1 = max(x1, 0)
-        y1 = max(y1, 0)
-        x2 = min(x2, video_info.Width)
-        y2 = min(y2, video_info.Height)
-
-        width3 = x2 - x1 + 1
-        hight3 = y2 - y1 + 1
-
+        hight2 = y2 - y1 + 1 
         if args.debug:
             print("process_video_file dealed: {}, {} -> [{} {} {} {}], {}x{} -> {}x{}".format(
-                idx, preds_cache[idx], x1, y1, x2, y2, width1, hight1, width3, hight3))
-        preds_location[idx] = np.array([x1, y1, x2, y2, width3, hight3])
-        cv2.imwrite(path.join(head_image_dir, '{}.jpg'.format(idx)),
-                    img[y1:y2+1, x1:x2+1])
+                idx, preds_cache[idx], x1, y1, x2, y2, width, hight, width2, hight2))
+        preds_location[idx] = np.array([iix1, iiy1, iix2, iiy2, iiwidth, iihight])
+        cv2.imwrite(path.join(head_image_dir, '{}.jpg'.format(idx)), img[iiy1:iiy2+1, iix1:iix2+1])
         bar.update(1)
+
     bar.refresh()
     bar.close()
+
+    
+    # # method2: get range
+    # width = preds_cache[:, 2] - preds_cache[:, 0] + 1
+    # hight = preds_cache[:, 3] - preds_cache[:, 1] + 1
+
+    # square = int(max(width.max(), hight.max()) * 1.6)
+    # print("target talking head square: {}".format(square))
+
+    # bar = tqdm(total=max_frame, disable=False, dynamic_ncols=True, desc='ExportHead')
+    # for idx in range(max_frame):
+    #     name = image_path_list[idx]
+    #     img = cv2.imread(name, cv2.IMREAD_COLOR)
+
+    #     x1, y1, x2, y2 = preds_cache[idx]
+    #     if args.debug:
+    #         print("process_video_file detected: {}, {}, {}, {}, {}".format(
+    #             idx, x1, y1, x2, y2))
+
+    #     width1 = width[idx]
+    #     hight1 = hight[idx]
+    #     diffx = (square - width1)//2
+    #     diffy = (square - hight1)//3
+
+    #     x1 = int(x1 - diffx)
+    #     x2 = int(x2 + diffx)
+    #     y1 = int(y1 - diffy*1)
+    #     y2 = int(y2 + diffy*2)
+
+    #     width2 = x2 - x1 + 1
+    #     hight2 = y2 - y1 + 1
+
+    #     if hight2 < square:
+    #         y2 += square-hight2
+    #     if width2 < square:
+    #         x2 += square-width2
+
+    #     # we may need to check square in images
+    #     x1 = max(x1, 0)
+    #     y1 = max(y1, 0)
+    #     x2 = min(x2, video_info.Width)
+    #     y2 = min(y2, video_info.Height)
+
+    #     width3 = x2 - x1 + 1
+    #     hight3 = y2 - y1 + 1
+
+    #     if args.debug:
+    #         print("process_video_file dealed: {}, {} -> [{} {} {} {}], {}x{} -> {}x{}".format(
+    #             idx, preds_cache[idx], x1, y1, x2, y2, width1, hight1, width3, hight3))
+    #     preds_location[idx] = np.array([x1, y1, x2, y2, width3, hight3])
+    #     cv2.imwrite(path.join(head_image_dir, '{}.jpg'.format(idx)),
+    #                 img[y1:y2+1, x1:x2+1])
+    #     bar.update(1)
+
+    # bar.refresh()
+    # bar.close()
 
     py_file = os.path.join(head_image_dir, "head_location.npy")
     with open(py_file, 'wb') as f:
@@ -514,7 +562,12 @@ def export_lm(args, video_info):
     video_info = green_screen_video(args, video_info)
 
 
-def combine_or_export_video(audio_path, video_path, video_fps, image_format, video_input_image_path, head_image_dir=None, location_path=None):
+def run_cmd(cmd):
+    return_code = subprocess.call(cmd, shell=False)
+    return return_code
+
+
+def combine_or_export_video(audio_path, video_path, video_fps, image_format, video_input_image_path, head_image_dir=None, location_path=None, head_input_video=None, input_video_path=None):
     # au video tmp path
     base_path_splits = video_path.rsplit(".")
     base_path = base_path_splits[:len(base_path_splits)-1]
@@ -527,6 +580,24 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
         with open(py_file, 'rb') as f:
             preds_location = np.load(f)
         # print("preds_location: {}".format(preds_location))
+        x1 = preds_location[:,0]
+        x2 = preds_location[:,2]
+        y1 = preds_location[:,1]
+        y2 = preds_location[:,3]
+        
+        if x1.max() == x1.min() and x2.max() == x2.min() and \
+            y1.max() == y1.min() and y2.max() == y2.min():
+                x = int(x1.max())
+                y = int(y1.max())
+                width = int(preds_location[:,4].max())
+                hight = int(preds_location[:,4].max())
+                
+                cmd = f'''ffmpeg -y -i {head_input_video} -i {input_video_path} 
+                -filter_complex "[0:v]chromakey=0x00FF00:0.3:0[p];[p]scale={width}:{hight}[pip];[1][pip]overlay=x={x}:y={y}" 
+                -shortest -r {args.fps}  {output_tmp}'''
+                ret = run_cmd(cmd)
+                if ret != 0:
+                    raise Exception(f"run cmd failed, cmd: {cmd}")
 
     print(f"target video path: {video_path}, video input image path: {video_input_image_path}, head input image path: {head_image_dir}")
     if location_path:
@@ -664,7 +735,7 @@ def combine_video(args, video_info):
     # stream.output(head_output_format, start_number=0).overwrite_output().run(quiet=True)
 
     image_format = "jpg"
-    combine_or_export_video(args.combine_input_audio, args.combine_output, args.fps, image_format, args.origin_image, head_output_dir, args.head_image)
+    combine_or_export_video(args.combine_input_audio, args.combine_output, args.fps, image_format, args.origin_image, head_output_dir, args.head_image, head_input_video, video_info.Path)
 
 
 def main(args):
