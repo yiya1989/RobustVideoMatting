@@ -54,7 +54,7 @@ class VideoWriter:
 class ImageSequenceReader(Dataset):
     def __init__(self, path, transform=None):
         self.path = path
-        _, image_list = get_image_list(path, "jpg")
+        _, image_list = get_file_list(path, "jpg")
         self.files = image_list
         self.transform = transform
         
@@ -104,12 +104,13 @@ class ImageNPArrayReader(Dataset):
         return img
 
 
-def get_image_list(path, image_format="jpg", with_path=False):
+def get_file_list(path, image_format="jpg", with_path=False):
     if not os.path.isdir(path):
         raise Exception(f"input path is not dir, path: {path}")
     image_name_list = []
     image_list = []
     filelist = os.listdir(path)
+    # TODO(LCH) support name not only has num
     image_names= [int(name[:-(len(image_format)+1)]) for name in filelist if name.endswith(image_format)]
     image_names.sort()
     # print(f"image list in path {path}/*.{image_format}, image_names: {image_names}")

@@ -241,8 +241,7 @@ def process_video_file(args, video_info):
     os.makedirs(head_image_dir, exist_ok=True)
     clear_dir(head_image_dir)
 
-    _, image_path_list = inference_utils.get_image_list(
-        args.origin_image, "jpg", True)
+    _, image_path_list = inference_utils.get_file_list(args.origin_image, "jpg", True)
 
     max_frame = len(image_path_list)
     # max_frame = 10
@@ -252,8 +251,7 @@ def process_video_file(args, video_info):
 
     idx = 0
     ix1, iy1, ix2, iy2 = 0, 0, int(video_info.Width), int(video_info.Height)
-    bar = tqdm(total=max_frame, disable=False,
-               dynamic_ncols=True, desc='DetectHead')
+    bar = tqdm(total=max_frame, disable=False, dynamic_ncols=True, desc='DetectHead')
     while idx < max_frame:
         start_num = idx
         batch = []
@@ -277,7 +275,7 @@ def process_video_file(args, video_info):
             for t_idx in range(args.sample):
                 # print(f"pred_idx: {pred_idx}")
                 preds_cache[pred_idx] = np.array([x1, y1, x2, y2])
-                cv2.imwrite(path.join(head_detect_image_dir, '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
+                # cv2.imwrite(path.join(head_detect_image_dir, '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
                 pred_idx += 1
                 if pred_idx >= max_frame:
                     break
@@ -296,6 +294,7 @@ def process_video_file(args, video_info):
         # iy1 = int(max(iiy1, 0))
         # ix2 = int(min(iix2, video_info.Width))
         # iy2 = int(min(iiy2, video_info.Height))
+        
     bar.refresh()
     bar.close()
     # print(f"preds_cache: {preds_cache} {preds_cache.shape}")
@@ -334,7 +333,11 @@ def process_video_file(args, video_info):
             print("process_video_file dealed: {}, {} -> [{} {} {} {}], {}x{} -> {}x{}".format(
                 idx, preds_cache[idx], x1, y1, x2, y2, width, hight, width2, hight2))
         preds_location[idx] = np.array([iix1, iiy1, iix2, iiy2, iiwidth, iihight])
-        cv2.imwrite(path.join(head_image_dir, '{}.jpg'.format(idx)), img[iiy1:iiy2+1, iix1:iix2+1])
+        head_img = img[iiy1:iiy2+1, iix1:iix2+1]
+        if square > 512:
+            img_size=(512, 512)
+            head_img = cv2.resize(head_img, img_size, interpolation=cv2.INTER_NEAREST)
+        cv2.imwrite(path.join(head_image_dir, '{}.jpg'.format(idx)), head_img)
         bar.update(1)
 
     bar.refresh()
@@ -563,6 +566,8 @@ def export_lm(args, video_info):
 
 
 def run_cmd(cmd):
+    if isinstance(cmd, slice):
+        cmd = " ".join(cmd)
     return_code = subprocess.call(cmd, shell=False)
     return return_code
 
@@ -573,6 +578,8 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
     base_path = base_path_splits[:len(base_path_splits)-1]
     output_tmp = ".".join(base_path) + "-au.mp4"
     
+    # use_cli_create_au_video = None
+    use_cli_create_au_video = False
     preds_location = np.zeros(0)
     if location_path:
         print("Head location path: {}".format(location_path))
@@ -584,103 +591,113 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
         x2 = preds_location[:,2]
         y1 = preds_location[:,1]
         y2 = preds_location[:,3]
-        
-        if x1.max() == x1.min() and x2.max() == x2.min() and \
+
+        if use_cli_create_au_video is None and \
+            x1.max() == x1.min() and x2.max() == x2.min() and \
             y1.max() == y1.min() and y2.max() == y2.min():
+                use_cli_create_au_video = True
                 x = int(x1.max())
                 y = int(y1.max())
                 width = int(preds_location[:,4].max())
                 hight = int(preds_location[:,4].max())
                 
-                cmd = f'''ffmpeg -y -i {head_input_video} -i {input_video_path} 
-                -filter_complex "[0:v]chromakey=0x00FF00:0.3:0[p];[p]scale={width}:{hight}[pip];[1][pip]overlay=x={x}:y={y}" 
-                -shortest -r {args.fps}  {output_tmp}'''
+                cmd = f'''ffmpeg -y -i {head_input_video} -i {input_video_path} '''\
+                f'''-filter_complex "[0:v]chromakey=0x00FF00:0.4:0[p];[p]scale={width}:{hight}[pip];[1][pip]overlay=x={x}:y={y}" '''\
+                f'''-shortest -r {args.fps}  {output_tmp}'''
                 ret = run_cmd(cmd)
                 if ret != 0:
                     raise Exception(f"run cmd failed, cmd: {cmd}")
 
-    print(f"target video path: {video_path}, video input image path: {video_input_image_path}, head input image path: {head_image_dir}")
-    if location_path:
-        image_path = location_path
-    elif head_image_dir:
-        image_path = head_image_dir
-    else:
-        image_path = video_input_image_path
-    image_format = "jpg"
-    image_names, _ = inference_utils.get_image_list(image_path, image_format, True)
-    # image_names = image_names[:100]
-    print(f"input origin image frame num: {len(image_names)}, over image frame num: {len(preds_location)}")
+    if not use_cli_create_au_video:
+        print(f"target video path: {video_path}, video input image path: {video_input_image_path}, head input image path: {head_image_dir}")
+        if location_path:
+            image_path = location_path
+        elif head_image_dir:
+            image_path = head_image_dir
+        else:
+            image_path = video_input_image_path
+        image_format = "jpg"
+        image_names, _ = inference_utils.get_image_list(image_path, image_format, True)
+        # image_names = image_names[:100]
+        print(f"input origin image frame num: {len(image_names)}, over image frame num: {len(preds_location)}")
 
-    def get_video_writer(numpy_data):
-        size = (numpy_data.shape[1], numpy_data.shape[0])
-        print(f"write video to {output_tmp}, size: {size}, numpy_data shape: {numpy_data.shape}")
+        def get_video_writer(numpy_data):
+            size = (numpy_data.shape[1], numpy_data.shape[0])
+            print(f"write video to {output_tmp}, size: {size}, numpy_data shape: {numpy_data.shape}")
 
-        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
-        return cv2.VideoWriter(output_tmp, fourcc, float(video_fps), size)
+            fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+            return cv2.VideoWriter(output_tmp, fourcc, float(video_fps), size)
 
-    video_writer = None
-    bar = tqdm(total=len(image_names), disable=False, dynamic_ncols=True)
-    for idx in range(len(image_names)):
-        name = image_names[idx]
-        numpy_data = None
-        numpy_over_data = None
+        video_writer = None
+        bar = tqdm(total=len(image_names), disable=False, dynamic_ncols=True)
+        for idx in range(len(image_names)):
+            name = image_names[idx]
+            numpy_data = None
+            numpy_over_data = None
 
-        # 1. video main input image
-        origin_image_path = os.path.join(video_input_image_path, f"{name}.{image_format}")
-        img = cv2.imread(origin_image_path)
-        # data = np.random.randint(0,255, (height, width, channel), dtype = np.uint8)
-        numpy_data = np.asarray(img)
-        # print(f"numpydata {numpy_data[:10]}")
-        # print(f"numpydata {numpy_data.shape}")
+            # 1. video main input image
+            origin_image_path = os.path.join(video_input_image_path, f"{name}.{image_format}")
+            img = cv2.imread(origin_image_path)
+            # data = np.random.randint(0,255, (height, width, channel), dtype = np.uint8)
+            numpy_data = np.asarray(img)
+            # print(f"numpydata {numpy_data[:10]}")
+            # print(f"numpydata {numpy_data.shape}")
 
-        # 2. video over image
-        if head_image_dir:
-            origin_image_over_path = os.path.join(head_image_dir, f"{name}.{image_format}")
-            img_over = cv2.imread(origin_image_over_path)
-            numpy_over_data = np.asarray(img_over)
-            # print(f"numpy_over_data {numpy_over_data[:10]}")
-            # print(f"numpy_over_data {numpy_over_data.shape}")
+            # 2. video over image
+            if head_image_dir:
+                # x1, y1, x2, y2, width3, hight3
+                idx_info = preds_location[idx]
+                if args.debug:
+                    print(f"preds_location: {idx}, {idx_info}")
+                [x1, y1, x2, y2, width, hight] = idx_info
+                
+                origin_image_over_path = os.path.join(head_image_dir, f"{name}.{image_format}")
+                img_over = cv2.imread(origin_image_over_path)
+                if img_over[0] != width or img_over[1] != hight:
+                    img_size=(width, hight)
+                    img_over = cv2.resize(img_over, img_size, interpolation=cv2.INTER_NEAREST)
             
-            # lower_green = np.array([0, 250, 0])
-            # upper_green = np.array([0, 255, 0])
-            # lower_green = np.array([45, 100, 50])
-            # upper_green = np.array([75, 255, 255])
-            lower_green = np.array([35, 43, 46])
-            upper_green = np.array([77, 255, 255])
-            hsv = cv2.cvtColor(img_over, cv2.COLOR_BGR2HSV)
-            mask_lm = cv2.inRange(hsv, lower_green, upper_green)
-            mask = cv2.bitwise_not(mask_lm)
-            result = cv2.bitwise_and(img_over, img_over, mask=mask)
-            numpy_over_data = np.asarray(result)
+                numpy_over_data = np.asarray(img_over)
+                # print(f"numpy_over_data {numpy_over_data[:10]}")
+                # print(f"numpy_over_data {numpy_over_data.shape}")
+                
+                # lower_green = np.array([0, 250, 0])
+                # upper_green = np.array([0, 255, 0])
+                # lower_green = np.array([45, 100, 50])
+                # upper_green = np.array([75, 255, 255])
+                lower_green = np.array([35, 43, 46])
+                upper_green = np.array([77, 255, 255])
+                hsv = cv2.cvtColor(img_over, cv2.COLOR_BGR2HSV)
+                mask_lm = cv2.inRange(hsv, lower_green, upper_green)
+                mask = cv2.bitwise_not(mask_lm)
+                result = cv2.bitwise_and(img_over, img_over, mask=mask)
+                numpy_over_data = np.asarray(result)
+                numpy_over_data.resize()
 
-            
-            # cv2.imshow("cc", mask)
-            # import time
-            # time.sleep(3)
-            # print(f"mask: {mask.shape} {mask[0]}")
-            index = np.where(numpy_over_data != np.array([0, 0, 0]))
-            # print(f"lm index: \n{numpy_over_data.shape} {index[0]}\n{index[1]}\n{index[2]} ")
-            # print(f"numpy_over_data[10][10] {numpy_over_data[10][10]}")
+                
+                # cv2.imshow("cc", mask)
+                # import time
+                # time.sleep(3)
+                # print(f"mask: {mask.shape} {mask[0]}")
+                index = np.where(numpy_over_data != np.array([0, 0, 0]))
+                # print(f"lm index: \n{numpy_over_data.shape} {index[0]}\n{index[1]}\n{index[2]} ")
+                # print(f"numpy_over_data[10][10] {numpy_over_data[10][10]}")
 
-            # x1, y1, x2, y2, width3, hight3
-            idx_info = preds_location[idx]
-            if args.debug:
-                print(f"preds_location: {idx}, {idx_info}")
-            [x1, y1, x2, y2, width3, hight3] = idx_info
-            # print(f"idx_info: {idx_info}, numpy_over_data: {len(numpy_over_data)}*{len(numpy_over_data[0])}")
-            # numpy_data[int(y1):int(y2)+1, int(x1):int(x2)+1] = numpy_over_data
-            # print(type(index[0]), type(y1))
-            new_idx = (index[0]+int(y1), index[1]+int(x1), index[2])
-            numpy_data[new_idx] = numpy_over_data[index]
 
-            # numpy_data[mask[0]+int(y1)][mask[1]+int(x1)] = numpy_over_data[mask[0]][mask[1]]
+                # print(f"idx_info: {idx_info}, numpy_over_data: {len(numpy_over_data)}*{len(numpy_over_data[0])}")
+                # numpy_data[int(y1):int(y2)+1, int(x1):int(x2)+1] = numpy_over_data
+                # print(type(index[0]), type(y1))
+                new_idx = (index[0]+int(y1), index[1]+int(x1), index[2])
+                numpy_data[new_idx] = numpy_over_data[index]
 
-        if video_writer is None:
-            video_writer = get_video_writer(numpy_data)
-        video_writer.write(numpy_data)
-        bar.update(1)
-    if video_writer is not None:
-        video_writer.release()
+                # numpy_data[mask[0]+int(y1)][mask[1]+int(x1)] = numpy_over_data[mask[0]][mask[1]]
+
+            if video_writer is None:
+                video_writer = get_video_writer(numpy_data)
+            video_writer.write(numpy_data)
+            bar.update(1)
+        if video_writer is not None:
+            video_writer.release()
 
     # return
     video = ffmpeg.input(output_tmp).video
@@ -693,6 +710,7 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
     #     ac=1,
     # ).overwrite_output().run()
     kwargs = {
+        "loglevel": "warning",
         "vcodec": "copy",
         # acodec:"copy",
         # audio_bitrate="copy", video_bitrate="copy", 
@@ -729,10 +747,10 @@ def combine_video(args, video_info):
     stream = ffmpeg.input(head_input_video)
     # stream = stream.filter('fps', fps='1/%d' % args.fps)
     head_output_dir = os.path.join(os.path.dirname(head_input_video), "bg_images")
-    # os.makedirs(head_output_dir, exist_ok=True)
-    # clear_dir(head_output_dir)
-    # head_output_format = os.path.join(head_output_dir, '%d.jpg')
-    # stream.output(head_output_format, start_number=0).overwrite_output().run(quiet=True)
+    os.makedirs(head_output_dir, exist_ok=True)
+    clear_dir(head_output_dir)
+    head_output_format = os.path.join(head_output_dir, '%d.jpg')
+    stream.output(head_output_format, start_number=0).overwrite_output().run(quiet=True)
 
     image_format = "jpg"
     combine_or_export_video(args.combine_input_audio, args.combine_output, args.fps, image_format, args.origin_image, head_output_dir, args.head_image, head_input_video, video_info.Path)
