@@ -275,7 +275,7 @@ def process_video_file(args, video_info):
             for t_idx in range(args.sample):
                 # print(f"pred_idx: {pred_idx}")
                 preds_cache[pred_idx] = np.array([x1, y1, x2, y2])
-                # cv2.imwrite(path.join(head_detect_image_dir, '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
+                cv2.imwrite(path.join(head_detect_image_dir, '{}.jpg'.format(pred_idx)),  batch[j][y1:y2+1, x1:x2+1])
                 pred_idx += 1
                 if pred_idx >= max_frame:
                     break
@@ -307,7 +307,7 @@ def process_video_file(args, video_info):
 
     width = x2 - x1 + 1
     hight = y2 - y1 + 1 
-    square = int(max(width, hight) * 1.5)
+    square = int(max(width, hight) * 1.8)
     print(f"Head image location input: [{x1}, {y1}, {x2}, {y2}] {width}x{hight} -> {square}x{square}")
     
     diffx = (square - width)//2
@@ -315,7 +315,7 @@ def process_video_file(args, video_info):
 
     iix1 = int(x1 - diffx)
     iix2 = iix1 + square - 1
-    iiy1 = int(y1 - diffy)
+    iiy1 = int(y1 - diffy*2)
     iiy2 = iiy1 + square - 1
     iiwidth = iix2 - iix1 + 1
     iihight = iiy2 - iiy1 + 1
@@ -592,7 +592,7 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
         y1 = preds_location[:,1]
         y2 = preds_location[:,3]
 
-        if use_cli_create_au_video is None and \
+        if use_cli_create_au_video is None and not head_image_dir and \
             x1.max() == x1.min() and x2.max() == x2.min() and \
             y1.max() == y1.min() and y2.max() == y2.min():
                 use_cli_create_au_video = True
@@ -610,15 +610,13 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
 
     if not use_cli_create_au_video:
         print(f"target video path: {video_path}, video input image path: {video_input_image_path}, head input image path: {head_image_dir}")
-        if location_path:
-            image_path = location_path
-        elif head_image_dir:
+        if head_image_dir:
             image_path = head_image_dir
         else:
             image_path = video_input_image_path
         image_format = "jpg"
-        image_names, _ = inference_utils.get_image_list(image_path, image_format, True)
-        # image_names = image_names[:100]
+        image_names, _ = inference_utils.get_file_list(image_path, image_format, True)
+        # image_names = image_names[:500]
         print(f"input origin image frame num: {len(image_names)}, over image frame num: {len(preds_location)}")
 
         def get_video_writer(numpy_data):
@@ -629,7 +627,7 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
             return cv2.VideoWriter(output_tmp, fourcc, float(video_fps), size)
 
         video_writer = None
-        bar = tqdm(total=len(image_names), disable=False, dynamic_ncols=True)
+        bar = tqdm(total=len(image_names), disable=False, dynamic_ncols=True, desc='CV2Video')
         for idx in range(len(image_names)):
             name = image_names[idx]
             numpy_data = None
@@ -653,8 +651,8 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
                 
                 origin_image_over_path = os.path.join(head_image_dir, f"{name}.{image_format}")
                 img_over = cv2.imread(origin_image_over_path)
-                if img_over[0] != width or img_over[1] != hight:
-                    img_size=(width, hight)
+                if img_over.shape[0] != width or img_over.shape[1] != hight:
+                    img_size=(int(width),  int(hight))
                     img_over = cv2.resize(img_over, img_size, interpolation=cv2.INTER_NEAREST)
             
                 numpy_over_data = np.asarray(img_over)
@@ -669,11 +667,16 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
                 upper_green = np.array([77, 255, 255])
                 hsv = cv2.cvtColor(img_over, cv2.COLOR_BGR2HSV)
                 mask_lm = cv2.inRange(hsv, lower_green, upper_green)
-                mask = cv2.bitwise_not(mask_lm)
+                mask = cv2.bitwise_not(mask_lm)       
+                        
+                # index_mask = np.where(mask)
+                # index_min_x = index_mask[0].min()
+                # # print(mask[:,index_min_y:index_min_y+10])
+                # mask[index_min_x:index_min_x+100,:] = 0
+
                 result = cv2.bitwise_and(img_over, img_over, mask=mask)
                 numpy_over_data = np.asarray(result)
-                numpy_over_data.resize()
-
+                # numpy_over_data.resize()
                 
                 # cv2.imshow("cc", mask)
                 # import time
@@ -746,7 +749,8 @@ def combine_video(args, video_info):
     print("Input head video path: {}".format(head_input_video))
     stream = ffmpeg.input(head_input_video)
     # stream = stream.filter('fps', fps='1/%d' % args.fps)
-    head_output_dir = os.path.join(os.path.dirname(head_input_video), "bg_images")
+    # head_output_dir = os.path.join(os.path.dirname(head_input_video), "head_images_new")
+    head_output_dir = os.path.join(os.path.dirname(head_input_video), "head_images")
     os.makedirs(head_output_dir, exist_ok=True)
     clear_dir(head_output_dir)
     head_output_format = os.path.join(head_output_dir, '%d.jpg')

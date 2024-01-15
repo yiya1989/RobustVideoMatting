@@ -74,10 +74,10 @@ def write_esd(chunk_idx, role_path, audio_text):
     role = os.path.basename(role_path.rstrip("/\\"))
     line = f"./data/{role}/wavs/{role}_{chunk_idx}.wav|{role}|ZH|{audio_text}\n"
     if chunk_idx == 0:
-        with open(esf_file, "w+") as fp:
+        with open(esf_file, "w+", encoding="utf-8") as fp:
             fp.write(line)
     else:
-        with open(esf_file, "a+") as fp:
+        with open(esf_file, "a+", encoding="utf-8") as fp:
             fp.write(line)
     
 
@@ -88,12 +88,11 @@ def get_second(duration):
     return duration_second
 
 
-def parse_audio(args, srt_file, chunk_idx):
+def parse_audio(args, srt_file, chunk_idx, target_audio_output_dir):
     srt = pysrt.open(srt_file)
 
     # show_one_srt(srt.data[0])
 
-    
     audio_name = os.path.basename(srt_file).split(".")[0]
     audio_format = args.audio_format
     audio_file_path = os.path.join(os.path.dirname(srt_file), f"{audio_name}.{audio_format}")
@@ -104,7 +103,6 @@ def parse_audio(args, srt_file, chunk_idx):
     print(f"==> dealing srt file: {srt_file}, audio file: {audio_file_path}...")
     audio = AudioSegment.from_file(audio_file_path, format=audio_format)
     
-    clear_and_pare_dir(args.out_dir)
     output_format = args.out_format
     
     length = 0
@@ -120,7 +118,7 @@ def parse_audio(args, srt_file, chunk_idx):
         duration_second = get_second(duration)
         text = content.text
         
-        chunk_file = os.path.join(args.out_dir, f"{target_audio_name}_{chunk_idx}.{output_format}")
+        chunk_file = os.path.join(target_audio_output_dir, f"{target_audio_name}_{chunk_idx}.{output_format}")
         
         # print("index: {:4d}, time: {} -> {}, duration: {:3.3f}, text: {}".format(index, start_time, end_time, duration_second, text))
         
@@ -145,13 +143,19 @@ def main(args):
     
     chunk_idx = 0
     
+    if args.role_path:
+        target_audio_output_dir = os.path.join(args.role_path, "raw")
+    else: 
+        target_audio_output_dir = args.out_dir
+    clear_and_pare_dir(target_audio_output_dir)
+    
     if os.path.isdir(args.srt):
         _, image_path_list = inference_utils.get_file_list(args.srt, "srt", True)
     else:
         image_path_list = [args.srt]
     
     for srt_file in image_path_list:
-        chunk_idx = parse_audio(args, srt_file,  chunk_idx)
+        chunk_idx = parse_audio(args, srt_file,  chunk_idx, target_audio_output_dir)
 
     
     
