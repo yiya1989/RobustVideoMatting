@@ -140,20 +140,27 @@ def convert_video(model,
         output_width, output_height =source_width, source_height
     
     # if (output_composition is not None) and (output_type == 'video'):
-    #     bgr = torch.tensor([140, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+    #     bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
     # else:
-    #     bgr = torch.tensor([140, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
-    
-    bgr = torch.tensor([140, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
-    print(f"bgr: {bgr.shape}, {bgr}")
+    #     bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
 
     if not output_bg_image:
-        bgr = torch.tensor([140, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+        bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+        print(f"bgr use [120, 255, 155], shape: {bgr.shape},  target: {output_width}*{output_height}")
     else:
         # h, w = get_video_size(input_source)
         # h, w = source[0].shape[1:]
         bgr = load_background_image_bgr(bg_image_cv, output_width, output_height, device, dtype)
-        print(f"bgr: {bgr.shape}, {output_width}, {output_height}")
+        print(f"bgr use background image, shape: {bgr.shape},  target: {output_width}*{output_height}")
+
+    p2d = None
+    if output_height > source_height or output_width > source_width:
+        left = int((output_height - source_height)/2)
+        right = int(output_height - source_height - left)
+        up = int((output_width - source_width)/2)
+        down = int(output_width - source_width - up)
+        p2d = (left, right, up, down)
+        print(f"source image/video small than output, resize from {source_height}*{output_width} to {output_height}*{output_width}, p2d: {p2d}")
 
     try:
         with torch.no_grad():
@@ -169,19 +176,11 @@ def convert_video(model,
                 # print(f"###{fgr.shape}")
                 # fgr_height, fgr_width = fgr.shape[3:]
                 fgr_width, fgr_height  = fgr.shape[3:]
-                print(f"org: fgr: {fgr.shape}, pha: {pha.shape}, bgr: {bgr.shape}, output: {output_height} {output_width}")
 
-                if output_height > fgr_height  or output_width > fgr_width:
-                    left = int((output_height - fgr_height)/2)
-                    right = int(output_height - fgr_height - left)
-                    up = int((output_width - fgr_width)/2)
-                    down = int(output_width - fgr_width - up)
-                    p2d = (left, right, up, down)
+                if p2d is not None:
                     fgr = F.pad(fgr, p2d, 'constant', 0)
                     pha = F.pad(pha, p2d, 'constant', 0)
-
-                
-                print(f"padded: fgr: {fgr.shape}, pha: {pha.shape}, bgr: {bgr.shape}, pad: {left} {right} {up} {down}")
+                # print(f"padded: fgr: {fgr.shape}, pha: {pha.shape}, bgr: {bgr.shape}, pad: {left} {right} {up} {down}")
 
                 if output_foreground is not None:
                     writer_fgr.write(fgr[0])
@@ -195,7 +194,7 @@ def convert_video(model,
                         com = torch.cat([fgr, pha], dim=-3)
                     else:
                         com = fgr * pha + bgr * (1 - pha)
-                    writer_com.write(com[0])
+                    writer_com.write(com[0], pha[0])
                 
                 bar.update(src.size(1))
 
