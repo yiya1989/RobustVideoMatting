@@ -111,7 +111,10 @@ def get_file_list(path, image_format="jpg", with_path=False):
     image_list = []
     filelist = os.listdir(path)
     # TODO(LCH) support name not only has num
-    image_names= [int(name[:-(len(image_format)+1)]) for name in filelist if name.endswith(image_format)]
+    try:
+        image_names= [int(name[:-(len(image_format)+1)]) for name in filelist if name.endswith(image_format)]
+    except:
+        image_names= [name[:-(len(image_format)+1)] for name in filelist if name.endswith(image_format)]
     image_names.sort()
     # print(f"image list in path {path}/*.{image_format}, image_names: {image_names}")
     for name in image_names:

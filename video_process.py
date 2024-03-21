@@ -314,12 +314,16 @@ def process_video_file(args, video_info):
     diffy = (square - hight)//3
 
     iix1 = int(x1 - diffx)
+    iix1 = iix1 if iix1 > 0 else 0
     iix2 = iix1 + square - 1
     iiy1 = int(y1 - diffy*2)
+    iiy1 = iiy1 if iiy1 > 0 else 0
     iiy2 = iiy1 + square - 1
     iiwidth = iix2 - iix1 + 1
     iihight = iiy2 - iiy1 + 1
     print(f"Head image location output: [{iix1}, {iiy1}, {iix2}, {iiy2}] {iiwidth}x{iihight}")
+    
+    # may export video and head_image by ffmpeg
 
     bar = tqdm(total=max_frame, disable=False, dynamic_ncols=True, desc='ExportHead')
     for idx in range(max_frame):
@@ -663,21 +667,34 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
                 # upper_green = np.array([0, 255, 0])
                 # lower_green = np.array([45, 100, 50])
                 # upper_green = np.array([75, 255, 255])
-                lower_green = np.array([35, 43, 46])
+                lower_green = np.array([35, 30, 46])
                 upper_green = np.array([77, 255, 255])
                 hsv = cv2.cvtColor(img_over, cv2.COLOR_BGR2HSV)
                 mask_lm = cv2.inRange(hsv, lower_green, upper_green)
                 mask = cv2.bitwise_not(mask_lm)       
                         
-                # index_mask = np.where(mask)
+                index_mask = np.where(mask)
                 # index_min_x = index_mask[0].min()
                 # # print(mask[:,index_min_y:index_min_y+10])
                 # mask[index_min_x:index_min_x+100,:] = 0
+                
+                d_map = {}
+                for idx in range(len(index_mask[0])):
+                    x, y = index_mask[0][idx], index_mask[1][idx]
+                    # print(x, y)
+                    old_x = d_map.get(y)
+                    if old_x is None or old_x > x:
+                        d_map[y] = x
+                
+                #print(len(d_map), d_map)
+                for y, min_x  in d_map.items():
+                    mask[min_x:min_x+30, y] = 0
+
 
                 result = cv2.bitwise_and(img_over, img_over, mask=mask)
                 numpy_over_data = np.asarray(result)
                 # numpy_over_data.resize()
-                
+
                 # cv2.imshow("cc", mask)
                 # import time
                 # time.sleep(3)
@@ -720,6 +737,7 @@ def combine_or_export_video(audio_path, video_path, video_fps, image_format, vid
         # audio_bitrate=video_info.AudioBitrate, video_bitrate=video_info.Bitrate, 
         "crf": 18, # 压缩比，一般18~28。-qscale is ignored, -crf is recommended
         # ac: 1,
+        # "itsoffset": "-0.02",
     }
     if not audio_path.endswith(".wav"):
         kwargs["acodec"] = "copy"

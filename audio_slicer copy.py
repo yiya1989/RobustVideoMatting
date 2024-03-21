@@ -12,13 +12,12 @@ import inference_utils
 def parse_args():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--role-path", help="role path", default="./data/ada", type=str, required=False)
     parser.add_argument("--audio", help="audio file or dir path", default="", required=True)
     parser.add_argument("--audio-format", help="audio format", default="mp3", required=False)
-    parser.add_argument("--srt", help="srt file or dir path", default="", required=False)
+    parser.add_argument("--srt", help="srt file or dir path", default="", required=True)
     parser.add_argument("--out-format", help="output audio format", default="wav", required=False)
-    parser.add_argument("--out-audio", help="output dir path", default="output", required=True)
-    parser.add_argument("--out-asr", help="output asr file path", default="", required=True)
-    parser.add_argument("--out-role", help="output role and role dir name", default="", required=True)
+    parser.add_argument("--out-dir", help="output dir path", default="output", required=False)
     parser.add_argument("--min", help="min audio second", default=3, type=int, required=False)
     parser.add_argument("--max", help="max audio second", default=10, type=int, required=False)
 
@@ -27,17 +26,15 @@ def parse_args():
     return args
 
 
-def pare_dir(path, clear=True):
-    if os.path.isfile(path):
-        os.remove(path)
+def clear_and_pare_dir(path):
+    if not os.path.isdir(path):
         os.makedirs(path, exist_ok=True)
-    elif not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-    elif clear:
+    else:
         files = glob.glob(os.path.join(path, "*"))
         for f in files:
             if os.path.isfile(f):
                 os.remove(f)
+
 
 def show_one_srt(content):
     characters_per_second = content.characters_per_second
@@ -72,13 +69,11 @@ def write_audio(audio, output_file, start, end, format='wav'):
     chunk.export(output_file, format=format)
 
 
-def write_asr(chunk_idx, esf_file, role, audio_text):
+def write_esd(chunk_idx, role_path, audio_text):
     #./data/ada/wavs/ada_42.wav|ada|ZH|在德林哈一夜的結尾處
+    esf_file = os.path.join(role_path, "esd.list")
+    role = os.path.basename(role_path.rstrip("/\\"))
     line = f"./data/{role}/wavs/{role}_{chunk_idx}.wav|{role}|ZH|{audio_text}\n"
-    dir_name = os.path.dirname(esf_file)
-    pare_dir(dir_name, clear=False)
-    # if not os.path.exists(dir_name):
-    #     os.makedirs(dir_name, exist_ok=True)
     if chunk_idx == 0:
         with open(esf_file, "w+", encoding="utf-8") as fp:
             fp.write(line)
@@ -102,10 +97,10 @@ def parse_audio(args, srt_file, chunk_idx, target_audio_output_dir):
     audio_name = os.path.basename(srt_file).split(".")[0]
     audio_format = args.audio_format
     audio_file_path = os.path.join(os.path.dirname(srt_file), f"{audio_name}.{audio_format}")
-    if args.out_role:
-        target_audio_role = args.out_role
+    if args.role_path:
+        target_audio_name = os.path.basename(args.role_path.rstrip("/\\"))
     else: 
-        target_audio_role = audio_name
+        target_audio_name = audio_name
     print(f"==> dealing srt file: {srt_file}, audio file: {audio_file_path}...")
     audio = AudioSegment.from_file(audio_file_path, format=audio_format)
     
@@ -124,7 +119,7 @@ def parse_audio(args, srt_file, chunk_idx, target_audio_output_dir):
         duration_second = get_second(duration)
         text = content.text
         
-        chunk_file = os.path.join(target_audio_output_dir, f"{target_audio_role}_{chunk_idx}.{output_format}")
+        chunk_file = os.path.join(target_audio_output_dir, f"{target_audio_name}_{chunk_idx}.{output_format}")
         
         # print("index: {:4d}, time: {} -> {}, duration: {:3.3f}, text: {}".format(index, start_time, end_time, duration_second, text))
         
@@ -137,7 +132,7 @@ def parse_audio(args, srt_file, chunk_idx, target_audio_output_dir):
         else:
             print("chunk_idx: {:4d}, chunk_file: {},\t duration: {:3.3f}, audio_text: {}".format(chunk_idx, chunk_file, end - audio_start, audio_text))
             write_audio(audio, chunk_file, audio_start, end, format=output_format)
-            write_asr(chunk_idx, args.out_asr, target_audio_role, audio_text)
+            write_esd(chunk_idx, args.role_path, audio_text)
             audio_start = -1
             chunk_idx += 1
             audio_text = ""
@@ -148,31 +143,25 @@ def parse_audio(args, srt_file, chunk_idx, target_audio_output_dir):
 def main(args):
     
     chunk_idx = 0
-
-    target_audio_output_dir = args.out_audio
-    pare_dir(target_audio_output_dir)
     
-    if os.path.isdir(args.audio):
-        args.srt = args.audio
-    else:
-        print("===>", args.audio.split(".")[:-1])
-        args.srt = ".".join(args.audio.split(".")[:-1]) + ".srt"
-        args.audio_format = args.audio.split(".")[-1]
-        
+    if args.role_path:
+        target_audio_output_dir = os.path.join(args.role_path, "raw")
+    else: 
+        target_audio_output_dir = args.out_dir
+    clear_and_pare_dir(target_audio_output_dir)
     
     if os.path.isdir(args.srt):
         _, image_path_list = inference_utils.get_file_list(args.srt, "srt", True)
     else:
         image_path_list = [args.srt]
-
-    print(f"current args: {args}")
+    
     for srt_file in image_path_list:
         chunk_idx = parse_audio(args, srt_file,  chunk_idx, target_audio_output_dir)
 
     
     
 if __name__ == '__main__':
-    # PS D:\lch\code\RobustVideoMatting> python.exe .\audio_slicer.py --audio "D:\360安全浏览器下载\小宝克隆\小宝克隆.WAV" --out-audio D:\lch\code\GPT-SoVITS-beta\GPT-SoVITS-beta0217\output\xiaobao\slicer_opt --out-asr D:\lch\code\GPT-SoVITS-beta\GPT-SoVITS-beta0217\output\xiaobao\asr_opt\slicer_opt.list --out-role xiaobao
+    # (nerf) PS D:\lch\code> python .\slicer.py --audio "D:/lch/audio/1-10/1.mp3" --srt "D:/lch/audio/1.srt" 
     args = parse_args()
     print(f"Input args: {args}")
     # args.srt = "D:/lch/audio/1-10/1.srt"
