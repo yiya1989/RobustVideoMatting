@@ -19,11 +19,14 @@ from torchvision import transforms
 from typing import Optional, Tuple
 from tqdm.auto import tqdm
 import numpy as np
+import cv2
 
 import argparse
 from model import MattingNetwork
+import torch.nn.functional as F
 
 from inference_utils import VideoReader, VideoWriter, ImageSequenceReader, ImageSequenceWriter
+
 
 def convert_video(model,
                   input_source: any,
@@ -33,7 +36,10 @@ def convert_video(model,
                   output_composition: Optional[str] = None,
                   output_alpha: Optional[str] = None,
                   output_foreground: Optional[str] = None,
+                  output_bg_image: Optional[str] = None,
                   output_video_mbps: Optional[float] = None,
+                  output_width: Optional[int] = None,
+                  output_height: Optional[int] = None,
                   seq_chunk: int = 1,
                   num_workers: int = 0,
                   progress: bool = True,
@@ -52,6 +58,9 @@ def convert_video(model,
             If output_type == 'png_sequence'. the composition is RGBA png images.
         output_alpha: The alpha output from the model.
         output_foreground: The foreground output from the model.
+        output_bg_image: The background image for output from the model.
+        output_width: output width.
+        output_height: output height.
         seq_chunk: Number of frames to process at once. Increase it for better parallelism.
         num_workers: PyTorch's DataLoader workers. Only use >0 for image input.
         progress: Show progress bar.
@@ -116,12 +125,43 @@ def convert_video(model,
         param = next(model.parameters())
         dtype = param.dtype
         device = param.device
+
+    bg_image_cv = None
+    if output_bg_image:
+        bg_image_cv = load_background_image(output_bg_image)
+    source_width, source_height = source[0].shape[1:]
+    print(f"input source shape {source_width}*{source_height}")
+
+    if not output_width and not output_height:
+        # if bg_image_cv is not None:
+        #     output_width, output_height = bg_image_cv.shape[:2]
+        # else:
+        #     output_width, output_height =source_width, source_height
+        output_width, output_height =source_width, source_height
     
-    if (output_composition is not None) and (output_type == 'video'):
+    # if (output_composition is not None) and (output_type == 'video'):
+    #     bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+    # else:
+    #     bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+
+    if not output_bg_image:
         bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+        print(f"bgr use [120, 255, 155], shape: {bgr.shape},  target: {output_width}*{output_height}")
     else:
-        bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
-    
+        # h, w = get_video_size(input_source)
+        # h, w = source[0].shape[1:]
+        bgr = load_background_image_bgr(bg_image_cv, output_width, output_height, device, dtype)
+        print(f"bgr use background image, shape: {bgr.shape},  target: {output_width}*{output_height}")
+
+    p2d = None
+    if output_height > source_height or output_width > source_width:
+        left = int((output_height - source_height)/2)
+        right = int(output_height - source_height - left)
+        up = int((output_width - source_width)/2)
+        down = int(output_width - source_width - up)
+        p2d = (left, right, up, down)
+        print(f"source image/video small than output, resize from {source_height}*{output_width} to {output_height}*{output_width}, p2d: {p2d}")
+
     try:
         with torch.no_grad():
             bar = tqdm(total=len(source), disable=not progress, dynamic_ncols=True)
@@ -133,6 +173,14 @@ def convert_video(model,
 
                 src = src.to(device, dtype, non_blocking=True).unsqueeze(0) # [B, T, C, H, W]
                 fgr, pha, *rec = model(src, *rec, downsample_ratio)
+                # print(f"###{fgr.shape}")
+                # fgr_height, fgr_width = fgr.shape[3:]
+                fgr_width, fgr_height  = fgr.shape[3:]
+
+                if p2d is not None:
+                    fgr = F.pad(fgr, p2d, 'constant', 0)
+                    pha = F.pad(pha, p2d, 'constant', 0)
+                # print(f"padded: fgr: {fgr.shape}, pha: {pha.shape}, bgr: {bgr.shape}, pad: {left} {right} {up} {down}")
 
                 if output_foreground is not None:
                     writer_fgr.write(fgr[0])
@@ -146,7 +194,7 @@ def convert_video(model,
                         com = torch.cat([fgr, pha], dim=-3)
                     else:
                         com = fgr * pha + bgr * (1 - pha)
-                    writer_com.write(com[0])
+                    writer_com.write(com[0], pha[0])
                 
                 bar.update(src.size(1))
 
@@ -158,6 +206,60 @@ def convert_video(model,
             writer_pha.close()
         if output_foreground is not None:
             writer_fgr.close()
+
+
+def get_video_size(input_video_path):
+    vid = cv2.VideoCapture(input_video_path)
+    height = vid.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    width = vid.get(cv2.CAP_PROP_FRAME_WIDTH)
+    return height, width
+
+
+def load_background_image(background_image_path):
+    cv_image = cv2.imread(background_image_path)
+    print(f"load_background_image shape {cv_image.shape}, {cv_image[0,0]}")
+    return cv_image
+
+
+def load_background_image_bgr(bg_image_cv, height, width, device, dtype):
+    height, width = int(height), int(width)
+
+    img_height, img_width = bg_image_cv.shape[:2]
+    img_scale_height, img_scale_width = height, width
+    if img_height / img_width > height / width:
+        img_scale_height = img_height * img_scale_width / img_width
+    else:
+        img_scale_width = img_width * img_scale_height / img_height 
+    
+    img_scale_height, img_scale_width = int(img_scale_height), int(img_scale_width)
+    print(f"load_background_image resize from {bg_image_cv.shape} to {img_scale_height}*{img_scale_width}, target: {height}*{width} {bg_image_cv[0,0]}")
+
+    bg_image_cv = cv2.cvtColor(bg_image_cv, cv2.COLOR_BGR2RGB)
+    bg_image_cv = cv2.resize(bg_image_cv, (img_scale_width, img_scale_height))
+    start_height = int((img_scale_height-height)/2)
+    start_width = int((img_scale_width-width)/2)
+    bg_image_cv = bg_image_cv[start_height:start_height+height,start_width:start_width+width]
+    print(f"load_background_image cut from {img_scale_height}*{img_scale_width} to {bg_image_cv.shape} {bg_image_cv[0,0]}")
+
+    # # show image    
+    # cv2.imshow('cv_image', cv_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    # rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+
+    # # 将图像转换为PyTorch张量
+    # tensor_image = torch.from_numpy(rgb_image.transpose((2, 0, 1))).float()
+    # tensor = tensor_image.to(device, dtype)
+
+    transform = transforms.Compose([ 
+        transforms.ToTensor() 
+    ])
+    tensor = transform(bg_image_cv).to(device, dtype)   #.permute(0, 1, 4, 2, 3)
+    print(f"load_background_image tensor: {tensor.shape}  {tensor[:,0,0]}")
+    bgr = tensor.view(1, 1, 3, height, width)
+    print(f"load_background_image bgr: {bgr.shape} {bgr[0,0,:,0,0]}")
+
+    return bgr
 
 
 def auto_downsample_ratio(h, w):
@@ -190,8 +292,11 @@ if __name__ == '__main__':
     parser.add_argument('--output-composition', type=str)
     parser.add_argument('--output-alpha', type=str)
     parser.add_argument('--output-foreground', type=str)
+    parser.add_argument('--output-bg-image', type=str)
     parser.add_argument('--output-type', type=str, required=True, choices=['video', 'png_sequence'])
     parser.add_argument('--output-video-mbps', type=int, default=1)
+    parser.add_argument('--output-height', type=int)
+    parser.add_argument('--output-width', type=int)
     parser.add_argument('--seq-chunk', type=int, default=1)
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument('--disable-progress', action='store_true')
@@ -206,7 +311,10 @@ if __name__ == '__main__':
         output_composition=args.output_composition,
         output_alpha=args.output_alpha,
         output_foreground=args.output_foreground,
+        output_bg_image=args.output_bg_image,
         output_video_mbps=args.output_video_mbps,
+        output_width=args.output_width,
+        output_height=args.output_height,
         seq_chunk=args.seq_chunk,
         num_workers=args.num_workers,
         progress=not args.disable_progress
