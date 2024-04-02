@@ -74,7 +74,7 @@ def write_audio(audio, output_file, start, end, format='wav'):
 
 def write_asr(chunk_idx, esf_file, role, audio_text):
     #./data/ada/wavs/ada_42.wav|ada|ZH|在德林哈一夜的結尾處
-    line = f"./data/{role}/wavs/{role}_{chunk_idx}.wav|{role}|ZH|{audio_text}\n"
+    line = f"./output/{role}/slicer_opt/{role}_{chunk_idx}.wav|{role}|ZH|{audio_text}\n"
     dir_name = os.path.dirname(esf_file)
     pare_dir(dir_name, clear=False)
     # if not os.path.exists(dir_name):
