@@ -43,6 +43,7 @@ def convert_video(model,
                   seq_chunk: int = 1,
                   num_workers: int = 0,
                   progress: bool = True,
+                  alpha: bool = False,
                   device: Optional[str] = None,
                   dtype: Optional[torch.dtype] = None):
     
@@ -100,7 +101,8 @@ def convert_video(model,
             writer_com = VideoWriter(
                 path=output_composition,
                 frame_rate=frame_rate,
-                bit_rate=int(output_video_mbps * 1000000))
+                bit_rate=int(output_video_mbps * 1000000),
+                alpha=alpha)
         if output_alpha is not None:
             writer_pha = VideoWriter(
                 path=output_alpha,
@@ -145,7 +147,9 @@ def convert_video(model,
     #     bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
 
     if not output_bg_image:
-        bgr = torch.tensor([120, 255, 155], device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
+        rgb = [120, 255, 155]
+        # rgb = [22, 255, 39]
+        bgr = torch.tensor(rgb, device=device, dtype=dtype).div(255).view(1, 1, 3, 1, 1)
         print(f"bgr use [120, 255, 155], shape: {bgr.shape},  target: {output_width}*{output_height}")
     else:
         # h, w = get_video_size(input_source)
@@ -187,13 +191,13 @@ def convert_video(model,
                 if output_alpha is not None:
                     writer_pha.write(pha[0])
                 if output_composition is not None:
-                    if output_type == 'video':
+                    if output_type == 'video' and not alpha:
                         com = fgr * pha + bgr * (1 - pha)
                     elif output_type == 'png':
                         fgr = fgr * pha.gt(0)
                         com = torch.cat([fgr, pha], dim=-3)
                     else:
-                        com = fgr * pha + bgr * (1 - pha)
+                        com = fgr * pha # + bgr * (1 - pha)
                     writer_com.write(com[0], pha[0])
                 
                 bar.update(src.size(1))
@@ -300,6 +304,7 @@ if __name__ == '__main__':
     parser.add_argument('--seq-chunk', type=int, default=1)
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument('--disable-progress', action='store_true')
+    parser.add_argument('--alpha', default=False, action='store_true')
     args = parser.parse_args()
     
     converter = Converter(args.variant, args.checkpoint, args.device)
@@ -310,6 +315,7 @@ if __name__ == '__main__':
         output_type=args.output_type,
         output_composition=args.output_composition,
         output_alpha=args.output_alpha,
+        alpha=args.alpha,
         output_foreground=args.output_foreground,
         output_bg_image=args.output_bg_image,
         output_video_mbps=args.output_video_mbps,

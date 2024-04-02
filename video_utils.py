@@ -52,7 +52,7 @@ class VideoInfo:
             if s['codec_type'] == 'audio':
                 audio_info = s
 
-        # print(f"video_info: {video_info}, audio_info: {audio_info}")
+        print(f"video_info: {video_info}, audio_info: {audio_info}")
 
         self.Width = int(video_info['width'])
         self.Height = int(video_info['height'])
